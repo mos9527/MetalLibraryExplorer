@@ -1,0 +1,237 @@
+/* Layout and code-view styling on top of 98.css, which supplies the chrome.
+   98.css targets small dialogs, so everything here is about stretching its
+   primitives across a full viewport without losing the bevels. */
+
+:root {
+  --desktop: #008080;
+  --mono: "Cascadia Mono", "Consolas", "Courier New", monospace;
+  --vertex: #007800;
+  --fragment: #7a3b00;
+  --kernel: #5a1c8a;
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; margin: 0; }
+
+body {
+  background: var(--desktop);
+  padding: 6px;
+  overflow: hidden;
+}
+
+/* ---------- the window fills the desktop ---------- */
+
+#shell {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+#shell-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin: 4px;
+  gap: 4px;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+.toolbar .hint { color: #555; margin-left: 2px; }
+
+main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 4px;
+  min-height: 0;
+}
+main.empty #detail { opacity: .6; }
+
+#sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+}
+
+/* fieldset as a group box that can actually flex */
+.pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  padding: 8px;
+}
+.pane.grow { flex: 1; }
+.pane > legend { padding: 0 4px; }
+
+.scroll { overflow: auto; flex: 1; min-height: 0; background: #fff; }
+
+/* ---------- libraries ---------- */
+
+#lib-list {
+  max-height: 30vh;
+  overflow: auto;
+  flex: none;
+}
+#lib-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+  padding: 2px 4px;
+  cursor: default;
+  white-space: nowrap;
+}
+#lib-list li.active {
+  background: navy;
+  color: #fff;
+}
+#lib-list .lib-name { font-family: var(--mono); }
+#lib-list .lib-size { color: #555; }
+#lib-list li.active .lib-size { color: #cfd8ff; }
+
+#lib-list li.standalone .lib-name::before {
+  content: "FILE";
+  font-family: inherit;
+  font-size: 9px;
+  border: 1px solid #808080;
+  padding: 0 3px;
+  margin-right: 5px;
+  color: #333;
+  background: silver;
+}
+
+/* ---------- filters ---------- */
+
+.filters { flex: none; margin-bottom: 6px; }
+#filter { width: 100%; }
+
+.chips { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
+.chip {
+  padding: 1px 7px;
+  border: 1px solid #808080;
+  background: silver;
+  box-shadow: inset -1px -1px #0a0a0a, inset 1px 1px #fff;
+  cursor: default;
+  user-select: none;
+  font-size: 11px;
+}
+.chip.on {
+  box-shadow: inset -1px -1px #fff, inset 1px 1px #0a0a0a;
+  background: #bcbcbc;
+  font-weight: bold;
+}
+
+/* ---------- virtual function list ---------- */
+
+#fn-spacer { position: relative; }
+#fn-rows { position: absolute; left: 0; right: 0; top: 0; }
+
+.fn-row {
+  height: 22px;
+  padding: 0 5px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: default;
+}
+.fn-row:nth-child(even) { background: #f2f2f2; }
+.fn-row.active, .fn-row.active:nth-child(even) { background: navy; color: #fff; }
+.fn-row .n {
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.fn-row .t { font-size: 10px; font-weight: bold; }
+.t.vertex { color: var(--vertex); }
+.t.fragment { color: var(--fragment); }
+.t.kernel { color: var(--kernel); }
+.fn-row .s { color: #555; min-width: 46px; text-align: right; }
+.fn-row.active .t, .fn-row.active .s { color: #cfd8ff; }
+
+/* ---------- disassembly ---------- */
+
+.detail-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 6px;
+  flex: none;
+}
+.detail-head strong { font-family: var(--mono); }
+.detail-head button { margin-left: auto; }
+#fn-meta { color: #555; margin-top: 2px; }
+
+#ir { margin: 0; padding: 6px 8px 24px; }
+#ir-code {
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre;
+  display: block;
+}
+
+.k { color: #0000c0; font-weight: bold; }
+.ty { color: #008000; }
+.str { color: #a31515; }
+.cm { color: #808080; }
+.md { color: #6f008a; }
+
+/* ---------- busy indicator ---------- */
+
+.spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid #808080;
+  border-top-color: navy;
+  border-radius: 50%;
+  visibility: hidden;
+  flex: none;
+}
+body.busy .spinner { visibility: visible; animation: spin .7s linear infinite; }
+body.busy { cursor: progress; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+#status.error { color: #a00; font-weight: bold; }
+
+/* ---------- drop overlay ---------- */
+
+#drop-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, .35);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+#drop-overlay.on { display: flex; }
+#drop-overlay .window { width: 320px; }
+
+/* ---------- about dialog ---------- */
+
+#about-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, .35);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+}
+#about-overlay.on { display: flex; }
+#about-window { width: 440px; }
+#about-window p { margin: 6px 0; }
+#about-window fieldset { margin-top: 10px; }
+.about-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+.about-actions button { min-width: 72px; }
