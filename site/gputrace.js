@@ -13,6 +13,8 @@
 // DecompressionStream, so a 500 MB store costs no more memory than the slice
 // currently being consumed.
 
+import { isMetalSource } from "./msl.js";
+
 const ENTRY_SIZE = 24;
 const NAME_LEN_SIZE = 2;
 
@@ -169,22 +171,44 @@ export class GpuTrace {
     return out.subarray(0, filled);
   }
 
-  /** Entries whose inflated contents begin with `magic`. */
-  async findByMagic(magic, minSize = 64 * 1024) {
-    const want = new TextEncoder().encode(magic);
-    const candidates = this.entries.filter((e) => e.usize >= minSize);
-    const hits = [];
+  /**
+   * Shader blobs in the store, sorted largest first, split by what they hold:
+   * a compiled library or MSL text.
+   *
+   * Candidates are the entries named by content hash — how the store keys both
+   * kinds — plus anything big enough to be a library whatever its name. That
+   * keeps the sniff off the tens of thousands of textures and buffers, which
+   * matters because a source blob can be 439 bytes, too small for a size filter
+   * to tell it apart from the noise.
+   */
+  async findShaders() {
+    const candidates = this.entries.filter(
+      (e) => HASH_NAME.test(e.name) || e.usize >= MIN_METALLIB);
+    const metallibs = [];
+    const sources = [];
     const BATCH = 32;
     for (let i = 0; i < candidates.length; i += BATCH) {
       const batch = candidates.slice(i, i + BATCH);
       const heads = await Promise.all(batch.map((e) =>
-        this.readPrefix(e, want.length).catch(() => new Uint8Array())));
+        this.readPrefix(e, Math.min(PROBE, e.usize)).catch(() => new Uint8Array())));
       heads.forEach((head, j) => {
-        if (head.length === want.length && want.every((b, k) => head[k] === b)) {
-          hits.push(batch[j]);
-        }
+        if (startsWith(head, MTLB)) metallibs.push(batch[j]);
+        else if (isMetalSource(head)) sources.push(batch[j]);
       });
     }
-    return hits.sort((a, b) => b.usize - a.usize);
+    const bySize = (a, b) => b.usize - a.usize;
+    return {
+      candidates: candidates.length,
+      metallibs: metallibs.sort(bySize),
+      sources: sources.sort(bySize),
+    };
   }
 }
+
+const MTLB = new TextEncoder().encode("MTLB");
+const HASH_NAME = /^[0-9a-f]{8,32}$/i;
+const MIN_METALLIB = 64 * 1024;
+const PROBE = 1024;
+
+const startsWith = (bytes, want) =>
+  bytes.length >= want.length && want.every((b, i) => bytes[i] === b);

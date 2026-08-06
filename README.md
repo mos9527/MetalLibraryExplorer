@@ -10,7 +10,8 @@
 ## What this fork adds: `site/`
 
 A standalone explorer that opens **Xcode `.gputrace` captures** as well as raw
-`.metallib` files, with **no size limit** and **no build step**.
+`.metallib` libraries and `.metal` sources, with **no size limit** and **no
+build step**.
 
 Upstream refuses inputs over 8 MB. That cap is a workaround in the SwiftWasm
 file reader — `fstat` misreports sizes under wasmer, so it reads into a fixed
@@ -23,13 +24,16 @@ library is well over a gigabyte before the page sees any of it.
 lazily. It keeps upstream's `llvm-dis.wasm` — the genuinely hard-to-replace
 piece — and drops the SwiftWasm parser entirely.
 
-- Opens a `.gputrace` bundle directly, finds the metallibs inside it and
-  streams them out of the capture's compressed store.
+- Opens a `.gputrace` bundle directly, finds the shaders inside it and streams
+  them out of the capture's compressed store.
 - Lists functions by inflating only up to the function table, which the format
   places before the bitcode. For a 291 MB library that is 4.1 MB and about
   85 ms for all 19,823 functions.
 - Disassembles a single function on demand, discarding inflate output as it
   goes so peak memory stays flat.
+- Reads **MSL source** too. Captures of shaders compiled from a string, or built
+  with source recording on, carry the Metal text rather than a library; those are
+  listed the same way, with their entry points parsed out of the source.
 - Styled with [98.css](https://github.com/jdan/98.css), because why not.
 
 Measured on a real capture (506 MB store, five metallibs, 49,116 functions):

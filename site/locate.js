@@ -6,6 +6,8 @@
 // to learn nothing. Look in the chosen directory, then one level down in case
 // the user picked the parent, and stop the moment both files turn up.
 
+import { isMetalSource, isText } from "./msl.js";
+
 const MAX_DEPTH = 1;
 
 /** File System Access API. Looks files up by name, never lists the directory. */
@@ -43,15 +45,17 @@ async function listDir(entry) {
 export const fileOf = (entry) =>
   new Promise((resolve, reject) => entry.file(resolve, reject));
 
-/** Sniff the container magic rather than trusting the extension. */
-export async function isMetallib(file) {
+/** Sniff the contents rather than trusting the extension. */
+export async function isShader(file) {
   if (file.size < 4) return false;
-  const magic = new Uint8Array(await file.slice(0, 4).arrayBuffer());
-  return String.fromCharCode(...magic) === "MTLB";
+  const head = new Uint8Array(await file.slice(0, 1024).arrayBuffer());
+  if (String.fromCharCode(...head.subarray(0, 4)) === "MTLB") return true;
+  return isMetalSource(head) || (/\.(metal|msl)$/i.test(file.name) && isText(head));
 }
 
-export async function metallibsAmong(files) {
-  const flags = await Promise.all(files.map((f) => isMetallib(f).catch(() => false)));
+/** Which of these dropped files are a library or a Metal source? */
+export async function shadersAmong(files) {
+  const flags = await Promise.all(files.map((f) => isShader(f).catch(() => false)));
   return files.filter((_, i) => flags[i]);
 }
 

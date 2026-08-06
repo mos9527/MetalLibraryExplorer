@@ -3,17 +3,23 @@
 import LLVMDis from "./llvm-dis.js";
 import { GpuTrace } from "./gputrace.js";
 import { MetalLib } from "./metallib.js";
+import { MetalSource, isMetalSource, isText } from "./msl.js";
 import { blobSource } from "./source.js";
 
-const sources = new Map();   // display name -> byte source
-const libs = new Map();      // display name -> parsed MetalLib
+// display name -> { source, format, parsed }
+const opened = new Map();
 let wasmModule = null;
 
 function uniqueName(name) {
-  if (!sources.has(name)) return name;
+  if (!opened.has(name)) return name;
   for (let n = 2; ; n++) {
-    if (!sources.has(`${name} (${n})`)) return `${name} (${n})`;
+    if (!opened.has(`${name} (${n})`)) return `${name} (${n})`;
   }
+}
+
+function add(name, source, format) {
+  opened.set(name, { source, format, parsed: null });
+  return { name, usize: source.size, format };
 }
 
 async function compiler() {
@@ -49,51 +55,78 @@ async function disassemble(bitcode) {
   return new TextDecoder().decode(program.FS.readFile("shader.air.ll"));
 }
 
+async function parse(rec) {
+  if (!rec.parsed) {
+    rec.parsed = rec.format === "msl"
+      ? await MetalSource.open(rec.source)
+      : await MetalLib.open(rec.source);
+  }
+  return rec.parsed;
+}
+
 const handlers = {
   async open({ indexFile, storeFile }) {
     const t0 = performance.now();
     const trace = await GpuTrace.open(indexFile, storeFile);
-    sources.clear();
-    libs.clear();
-    const found = await trace.findByMagic("MTLB");
-    for (const entry of found) sources.set(entry.name, trace.source(entry));
+    opened.clear();
+    const { metallibs, sources, candidates } = await trace.findShaders();
+    const libs = [
+      ...metallibs.map((e) => add(e.name, trace.source(e), "metallib")),
+      ...sources.map((e) => add(e.name, trace.source(e), "msl")),
+    ];
     return {
       entryCount: trace.entries.length,
       storeSize: storeFile.size,
+      probed: candidates,
       elapsed: performance.now() - t0,
-      libs: found.map((e) => ({ name: e.name, usize: e.usize, kind: "trace" })),
+      libs: libs.map((l) => ({ ...l, kind: "trace" })),
     };
   },
 
-  /** Open standalone .metallib files, adding them alongside anything already open. */
+  /** Open standalone files, adding them alongside anything already open. */
   async openFiles({ files }) {
     const t0 = performance.now();
     const added = [];
     const rejected = [];
     for (const file of files) {
-      const magic = new Uint8Array(await file.slice(0, 4).arrayBuffer());
-      if (new TextDecoder().decode(magic) !== "MTLB") {
+      const head = new Uint8Array(await file.slice(0, 1024).arrayBuffer());
+      const format = formatOf(head, file.name);
+      if (!format) {
         rejected.push(file.name);
         continue;
       }
       const name = uniqueName(file.name);
-      sources.set(name, blobSource(file, name));
-      added.push({ name, usize: file.size, kind: "file" });
+      added.push({ ...add(name, blobSource(file, name), format), kind: "file" });
     }
     return { libs: added, rejected, elapsed: performance.now() - t0 };
   },
 
   async list({ name }) {
     const t0 = performance.now();
-    let lib = libs.get(name);
-    if (!lib) {
-      lib = await MetalLib.open(sources.get(name));
-      libs.set(name, lib);
+    const rec = opened.get(name);
+    const parsed = await parse(rec);
+    const elapsed = performance.now() - t0;
+
+    if (rec.format === "msl") {
+      return {
+        format: "msl",
+        elapsed,
+        text: parsed.text,
+        functions: parsed.functions.map((f) => ({
+          key: `${f.name}@${f.offset}`,
+          name: f.name,
+          type: f.type,
+          line: f.line,
+          returns: f.returns,
+        })),
+      };
     }
     return {
-      header: lib.header,
-      elapsed: performance.now() - t0,
-      functions: lib.functions.map((f) => ({
+      format: "metallib",
+      header: parsed.header,
+      elapsed,
+      functions: parsed.functions.map((f) => ({
+        key: f.name,
         name: f.name,
         type: f.typeName,
         size: f.bitcodeSize,
@@ -105,7 +138,7 @@ const handlers = {
   },
 
   async disasm({ name, fnName, id }) {
-    const lib = libs.get(name);
+    const lib = opened.get(name).parsed;
     const fn = lib.functions.find((f) => f.name === fnName);
     const t0 = performance.now();
     const bitcode = await lib.bitcode(fn, (at, target) => {
@@ -117,6 +150,16 @@ const handlers = {
     return { ll, bitcodeSize: bitcode.length, fetchMs: fetched, disasmMs: performance.now() - t1 };
   },
 };
+
+const MTLB = "MTLB";
+
+/** Sniff the container, falling back to the extension for plain source. */
+function formatOf(head, filename) {
+  if (String.fromCharCode(...head.subarray(0, 4)) === MTLB) return "metallib";
+  if (isMetalSource(head)) return "msl";
+  if (/\.(metal|msl)$/i.test(filename) && isText(head)) return "msl";
+  return null;
+}
 
 self.onmessage = async ({ data }) => {
   const { id, cmd, ...args } = data;

@@ -83,8 +83,7 @@ main.empty #detail { opacity: .6; }
 }
 #lib-list li {
   display: flex;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
   align-items: baseline;
   padding: 2px 4px;
   cursor: default;
@@ -94,19 +93,22 @@ main.empty #detail { opacity: .6; }
   background: navy;
   color: #fff;
 }
-#lib-list .lib-name { font-family: var(--mono); }
+#lib-list .lib-name { font-family: var(--mono); flex: 1; overflow: hidden; text-overflow: ellipsis; }
 #lib-list .lib-size { color: #555; }
 #lib-list li.active .lib-size { color: #cfd8ff; }
 
-#lib-list li.standalone .lib-name::before {
-  content: "FILE";
-  font-family: inherit;
+/* what the entry holds, and whether it came from a capture or a loose file */
+#lib-list .tag {
   font-size: 9px;
   border: 1px solid #808080;
   padding: 0 3px;
-  margin-right: 5px;
   color: #333;
   background: silver;
+  flex: none;
+}
+#lib-list li.standalone .tag::after {
+  content: "·FILE";
+  color: #666;
 }
 
 /* ---------- filters ---------- */
@@ -186,6 +188,9 @@ main.empty #detail { opacity: .6; }
 .str { color: #a31515; }
 .cm { color: #808080; }
 .md { color: #6f008a; }
+.pp { color: #808000; }
+.at { color: #005f87; }
+.num { color: #b06000; }
 
 /* ---------- busy indicator ---------- */
 
