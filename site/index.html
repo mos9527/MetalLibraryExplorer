@@ -40,7 +40,12 @@
     <main id="layout" class="empty">
       <div id="sidebar">
         <fieldset class="pane">
-          <legend>Libraries</legend>
+          <legend>Libraries <span id="lib-count"></span></legend>
+          <div class="field-row-stacked filters" id="lib-filters" hidden>
+            <input type="search" id="lib-filter" placeholder="Filter by hash or entry point"
+                   autocomplete="off">
+            <div class="chips" id="stage-chips"></div>
+          </div>
           <ul class="tree-view" id="lib-list"></ul>
         </fieldset>
 

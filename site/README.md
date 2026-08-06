@@ -20,6 +20,14 @@ Captures hold shaders in one of two shapes and the tool handles both:
   listed alongside the libraries, their entry points are parsed out of the text,
   and picking one jumps the source view to its declaration.
 
+Sources are read in full when the capture opens — 61 of them cost about 20 ms —
+because a list of content hashes cannot be narrowed without knowing what is
+inside them. So the library list carries the stages each source declares and can
+be filtered by stage or by entry point name, which is how you get from sixty
+identical-looking hashes to the two compute shaders. Libraries are not read
+eagerly: they hold thousands of functions across every stage, so the same
+summary would say nothing.
+
 ## Running
 
 Any static file server works; the only requirement is that `.wasm` is served as
@@ -78,7 +86,7 @@ store and about 0.5 ms from a plain file.
 | `metallib.js` | MTLB header and function table parser |
 | `msl.js` | sniffs Metal source and finds its entry points |
 | `worker.js` | owns the trace, the parsers and `llvm-dis` |
-| `app.js` | UI: folder picking, virtualised function list, code view |
+| `app.js` | UI: folder picking, filtering, virtualised list, code view |
 | `llvm-dis.js` / `.wasm` | from [MetalLibraryExplorer](https://github.com/YuAo/MetalLibraryExplorer) (MIT) |
 | `vendor/98.css` | from [98.css](https://github.com/jdan/98.css) (MIT), with its fonts |
 

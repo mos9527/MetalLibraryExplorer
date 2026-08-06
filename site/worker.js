@@ -64,6 +64,32 @@ async function parse(rec) {
   return rec.parsed;
 }
 
+const STAGES = ["vertex", "fragment", "kernel"];
+
+/**
+ * Read every source up front and record which stages it declares.
+ *
+ * Sources are small and there is no way to filter a list of content hashes
+ * without knowing what is inside them — a capture can be sixty blobs named
+ * nothing but a hash, of which two are the compute shader you are looking for.
+ * Libraries are left alone: they hold thousands of functions across every
+ * stage, so the same summary would say nothing, and reading their function
+ * tables eagerly would undo the point of listing on demand.
+ */
+async function summariseSources(libs) {
+  const t0 = performance.now();
+  const pending = libs.filter((l) => l.format === "msl");
+  const BATCH = 16;
+  for (let i = 0; i < pending.length; i += BATCH) {
+    await Promise.all(pending.slice(i, i + BATCH).map(async (lib) => {
+      const parsed = await parse(opened.get(lib.name));
+      lib.stages = STAGES.filter((s) => parsed.functions.some((f) => f.type === s));
+      lib.entryPoints = [...new Set(parsed.functions.map((f) => f.name))];
+    }));
+  }
+  return performance.now() - t0;
+}
+
 const handlers = {
   async open({ indexFile, storeFile }) {
     const t0 = performance.now();
@@ -74,12 +100,15 @@ const handlers = {
       ...metallibs.map((e) => add(e.name, trace.source(e), "metallib")),
       ...sources.map((e) => add(e.name, trace.source(e), "msl")),
     ];
+    for (const lib of libs) lib.kind = "trace";
+    const sourceMs = await summariseSources(libs);
     return {
       entryCount: trace.entries.length,
       storeSize: storeFile.size,
       probed: candidates,
+      sourceMs,
       elapsed: performance.now() - t0,
-      libs: libs.map((l) => ({ ...l, kind: "trace" })),
+      libs,
     };
   },
 
@@ -98,6 +127,7 @@ const handlers = {
       const name = uniqueName(file.name);
       added.push({ ...add(name, blobSource(file, name), format), kind: "file" });
     }
+    await summariseSources(added);
     return { libs: added, rejected, elapsed: performance.now() - t0 };
   },
 

@@ -33,6 +33,8 @@ function call(cmd, args = {}, onProgress) {
 
 // ---------------------------------------------------------------- state
 
+const STAGES = ["vertex", "fragment", "kernel"];
+
 const state = {
   libs: [],
   lib: null,
@@ -40,6 +42,7 @@ const state = {
   visible: [],
   types: new Set(),
   filter: "",
+  libFilter: "",
   selected: null,
   source: null,     // MSL text of the selected library, if it is a source
   rendered: null,   // which library's source is currently in the DOM
@@ -95,12 +98,15 @@ async function openBundle(bundle) {
   try {
     const info = await call("open", { indexFile: bundle.index, storeFile: bundle.store0 });
     state.libs = info.libs;
+    renderStageChips();
     renderLibs();
     setLibCount();
     setSource(`${bundle.dir || "bundle"} — ${info.entryCount.toLocaleString()} entries, ` +
               `${fmtBytes(info.storeSize)} store`);
+    const read = info.sourceMs > 0.5 ? `, read all source in ${info.sourceMs.toFixed(0)} ms` : "";
     setStatus(`Found ${describe(info.libs)} in ${info.elapsed.toFixed(0)} ms ` +
-              `— sniffed ${info.probed.toLocaleString()} of ${info.entryCount.toLocaleString()} blobs`);
+              `— sniffed ${info.probed.toLocaleString()} of ` +
+              `${info.entryCount.toLocaleString()} blobs${read}`);
     $("layout").classList.remove("empty");
     if (info.libs.length) await selectLib(info.libs[0]);
   } catch (err) {
@@ -118,6 +124,7 @@ async function openLooseFiles(files) {
   try {
     const { libs, rejected } = await call("openFiles", { files });
     state.libs = [...state.libs, ...libs];
+    renderStageChips();
     renderLibs();
     setLibCount();
     $("layout").classList.remove("empty");
@@ -137,27 +144,79 @@ async function openLooseFiles(files) {
 
 // ---------------------------------------------------------------- libraries
 
+const activeStages = new Set();
+
+/**
+ * A source is labelled with the stages it declares, which is the only thing
+ * distinguishing one content hash from the next. A library holds thousands of
+ * functions across every stage, so there is nothing useful to summarise.
+ */
+const stageTag = (lib) =>
+  lib.stages?.length ? lib.stages.map((s) => s.slice(0, 4)).join("+") : "LIB";
+
+function libMatches(lib) {
+  // libraries carry no stage summary, so a stage filter cannot rule them out
+  if (activeStages.size && lib.stages && !lib.stages.some((s) => activeStages.has(s))) return false;
+  if (!state.libFilter) return true;
+  return lib.name.toLowerCase().includes(state.libFilter) ||
+         (lib.entryPoints ?? []).some((n) => n.toLowerCase().includes(state.libFilter));
+}
+
 function renderLibs() {
-  const ul = $("lib-list");
-  ul.replaceChildren(...state.libs.map((lib) => {
+  const visible = state.libs.filter(libMatches);
+  $("lib-count").textContent = visible.length === state.libs.length
+    ? `(${state.libs.length.toLocaleString()})`
+    : `(${visible.length.toLocaleString()} of ${state.libs.length.toLocaleString()})`;
+
+  $("lib-list").replaceChildren(...visible.map((lib) => {
     const li = document.createElement("li");
     li.dataset.name = lib.name;
     li.innerHTML = `<span class="tag"></span><span class="lib-name"></span><span class="lib-size"></span>`;
-    li.querySelector(".tag").textContent = lib.format === "msl" ? "MSL" : "LIB";
+    const tag = li.querySelector(".tag");
+    tag.textContent = stageTag(lib);
+    if (lib.stages?.length === 1) tag.classList.add(lib.stages[0]);
     li.querySelector(".lib-name").textContent = lib.name;
     li.querySelector(".lib-size").textContent = fmtBytes(lib.usize);
+    li.classList.toggle("active", state.lib?.name === lib.name);
     if (lib.kind === "file") li.classList.add("standalone");
-    const what = lib.format === "msl" ? "Metal source" : "compiled library";
-    li.title = `${what}, ${lib.kind === "file" ? "standalone file" : "from the capture"}`;
+    const what = lib.format === "msl"
+      ? `Metal source: ${lib.entryPoints?.join(", ") ?? "no entry points"}`
+      : "compiled library";
+    li.title = `${what} — ${lib.kind === "file" ? "standalone file" : "from the capture"}`;
     li.onclick = () => selectLib(lib);
     return li;
   }));
 }
 
+/** Chips for the stages present across the sources, hidden if there are none. */
+function renderStageChips() {
+  activeStages.clear();
+  state.libFilter = "";
+  $("lib-filter").value = "";
+  const sources = state.libs.filter((l) => l.stages?.length);
+  const present = STAGES.filter((s) => sources.some((l) => l.stages.includes(s)));
+  $("lib-filters").hidden = !present.length;
+  $("stage-chips").replaceChildren(...present.map((stage) => chip(
+    `${stage} ${sources.filter((l) => l.stages.includes(stage)).length.toLocaleString()}`,
+    (on) => {
+      on ? activeStages.add(stage) : activeStages.delete(stage);
+      renderLibs();
+    })));
+}
+
+/** A pressable 98.css-style chip; `toggle` receives its new state. */
+function chip(label, toggle) {
+  const el = document.createElement("span");
+  el.className = "chip";
+  el.textContent = label;
+  el.onclick = () => toggle(el.classList.toggle("on"));
+  return el;
+}
+
 async function selectLib(lib) {
   state.lib = lib;
   state.selected = null;
-  for (const li of $("lib-list").children) li.classList.toggle("active", li.dataset.name === lib.name);
+  renderLibs();
   setStatus(`Reading ${lib.name}…`);
   try {
     const info = await call("list", { name: lib.name });
@@ -186,9 +245,12 @@ function libSummary(lib, { functions, header, elapsed }) {
          `— ${version}, ${fmtBytes(header.bitcodeSize)} of bitcode, ${read}`;
 }
 
-function mslSummary(lib, { functions, text, elapsed }) {
-  return `${lib.name}: ${plural(functions.length, "entry point")} in ${elapsed.toFixed(0)} ms ` +
-         `— ${plural(text.split("\n").length, "line")} of Metal source, ${fmtBytes(lib.usize)}`;
+// no timing here: sources are read and parsed when the capture is opened, so
+// that the library list can be filtered by stage
+function mslSummary(lib, { functions, text }) {
+  return `${lib.name}: ${plural(functions.length, "entry point")} ` +
+         `(${functions.map((f) => f.type).join(", ")}) — ` +
+         `${plural(text.split("\n").length, "line")} of Metal source, ${fmtBytes(lib.usize)}`;
 }
 
 // ---------------------------------------------------------------- filtering
@@ -197,18 +259,12 @@ const activeTypes = new Set();
 
 function renderChips() {
   activeTypes.clear();
-  const box = $("type-chips");
-  box.replaceChildren(...[...state.types].sort().map((type) => {
+  $("type-chips").replaceChildren(...[...state.types].sort().map((type) => {
     const count = state.functions.filter((f) => f.type === type).length;
-    const chip = document.createElement("span");
-    chip.className = "chip";
-    chip.textContent = `${type} ${count.toLocaleString()}`;
-    chip.onclick = () => {
-      activeTypes.has(type) ? activeTypes.delete(type) : activeTypes.add(type);
-      chip.classList.toggle("on");
+    return chip(`${type} ${count.toLocaleString()}`, (on) => {
+      on ? activeTypes.add(type) : activeTypes.delete(type);
       applyFilter();
-    };
-    return chip;
+    });
   }));
 }
 
@@ -338,7 +394,7 @@ const LANGS = {
       /("(?:[^"\\\n]|\\.)*")/,                                       // string
       /(\[\[[^\]\n]*\]\])/,                                          // attribute
       /\b(using|namespace|typedef|struct|union|enum|class|template|typename|const|constexpr|constant|static|inline|extern|return|if|else|for|while|do|switch|case|default|break|continue|sizeof|new|delete|true|false|nullptr|this|operator|as_type|vertex|fragment|kernel|device|threadgroup|thread|ray_data|object_data|discard_fragment)\b/,
-      /\b((?:void|bool|size_t|ptrdiff_t|u?(?:char|short|int|long)|(?:half|float|double)|sampler|array)(?:[234](?:x[234])?)?|texture(?:1d|2d|3d|cube)(?:_array|_ms)?|depth(?:2d|cube)(?:_array|_ms)?|atomic_\w+)\b/,
+      /\b((?:void|bool|size_t|ptrdiff_t|u?(?:char|short|int|long)|(?:half|float|double)|sampler|array)(?:[234](?:x[234])?)?|texture(?:1d|2d|3d|cube)(?:_array|_ms)?|texture_buffer|depth(?:2d|cube)(?:_array|_ms)?|imageblock\w*|acceleration_structure|visible_function_table|atomic_\w+)\b/,
       /\b(0[xX][0-9a-fA-F]+|\d[\d.]*(?:[eE][-+]?\d+)?[fFhHuUlL]*)\b/, // number
     ),
     classes: ["cm", "pp", "str", "at", "k", "ty", "num"],
@@ -399,6 +455,10 @@ $("lib-btn").onclick = async () => {
 $("lib-picker").onchange = (e) => openLooseFiles([...e.target.files]);
 $("fn-scroll").onscroll = renderRows;
 $("filter").oninput = (e) => { state.filter = e.target.value; applyFilter(); };
+$("lib-filter").oninput = (e) => {
+  state.libFilter = e.target.value.trim().toLowerCase();
+  renderLibs();
+};
 $("save-btn").onclick = () => {
   const blob = new Blob([state.save.text], { type: "text/plain" });
   const a = document.createElement("a");
